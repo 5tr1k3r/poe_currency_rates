@@ -1,3 +1,5 @@
+"""This tool collects Path of Exile currency rates from currency.poe.trade."""
+
 import sys
 from collections import namedtuple
 
@@ -11,23 +13,45 @@ AVERAGE_SETTING = 5                         # How many results to use for averag
 REFRESH_SETTING = 30 * 60 * 1000            # Update the table each x min
 Deal = namedtuple('Deal', ['query', 'best', 'avg', 'amount', 'inverse_best', 'inverse_avg',
                            'inverse_amount', 'best_contact_data', 'inverse_best_contact_data'])
-CURRENCY = ['', 'alteration', 'fusing', 'alchemy', 'chaos', 'gcp', 'exalted', 'chromatic',
-            'jeweller', 'chance', 'chisel', 'scouring', 'blessed', 'regret', 'regal',
-            'divine', 'vaal', 'wisdom', 'portal', 'scrap', 'whetstone', 'bauble',
-            'transmutation', 'augmentation', 'mirror', 'eternal', 'perandus_coin', 'dusk',
-            'midnight', 'dawn', 'noon', 'grief', 'rage', 'hope', 'ignorance', 'silver',
-            'eber', 'yriel', 'inya', 'volkuur', 'offering']
+
 HOR_HEADERS = ['   Best   ', 'Average', '#', 'Inverse best', 'Inverse avg', '#', '\u0394']
 QUERIES_FILENAME = 'queries2.txt'
 
 
+class Query:
+    """Parse a query string like 'buy silver with chaos + inverse'."""
+    CURRENCY = ('', 'alteration', 'fusing', 'alchemy', 'chaos', 'gcp', 'exalted', 'chromatic',
+                'jeweller', 'chance', 'chisel', 'scouring', 'blessed', 'regret', 'regal',
+                'divine', 'vaal', 'wisdom', 'portal', 'scrap', 'whetstone', 'bauble',
+                'transmutation', 'augmentation', 'mirror', 'eternal', 'perandus_coin', 'dusk',
+                'midnight', 'dawn', 'noon', 'grief', 'rage', 'hope', 'ignorance', 'silver',
+                'eber', 'yriel', 'inya', 'volkuur', 'offering')
+
+    def __init__(self, query_string: str) -> None:
+        split_query = query_string.split()  # type: list
+
+        # If there are 6 words in the query, there must be an inverse request
+        self.inverse = len(split_query) == 6  # type: bool
+
+        self.want = split_query[1]
+        self.have = split_query[3]
+
+        # Get the index for each currency, i.e. 6 for exalted, 9 for chance etc.
+        self.want_index = self.CURRENCY.index(self.want)  # type: int
+        self.have_index = self.CURRENCY.index(self.have)  # type: int
+
+        # Take only first 4 words so "+ inverse" isn't printed out.
+        self.header = ' '.join(split_query[0:4])
+
+
 class Window(QtGui.QWidget):
+    """Basic Qt window for the tool."""
     BASE_URL = 'http://currency.poe.trade/'
 
     def __init__(self):
         super(Window, self).__init__()
         self.progress = None
-        self.lastUpdate = None
+        self.last_update = None
         self.table = None
         self.deals = None
 
@@ -40,6 +64,7 @@ class Window(QtGui.QWidget):
         self.home()
 
     def home(self):
+        """Prepare to show the window and handle signals."""
         # Grid layout
         grid = QtGui.QGridLayout()
         self.setLayout(grid)
@@ -47,11 +72,11 @@ class Window(QtGui.QWidget):
         self.table = QtGui.QTableWidget(self)
         self.table.setColumnCount(len(HOR_HEADERS))
 
-        self.lastUpdate = QtGui.QLabel(self)
+        self.last_update = QtGui.QLabel(self)
         # noinspection PyArgumentList
-        self.lastUpdate.setText('Last updated: ' + QtCore.QTime.currentTime().toString())
-        self.lastUpdate.move(400, 570)
-        self.lastUpdate.resize(self.lastUpdate.sizeHint())
+        self.last_update.setText('Last updated: ' + QtCore.QTime.currentTime().toString())
+        self.last_update.move(400, 570)
+        self.last_update.resize(self.last_update.sizeHint())
 
         self.progress = QtGui.QProgressBar(self)
         self.progress.setGeometry(170, 545, 110, 10)
@@ -78,6 +103,7 @@ class Window(QtGui.QWidget):
         self.show()  # Actually showing the window/gui here.
 
     def update_table(self):
+        """Populate the table with new data."""
         vert_headers = []  # Create a list for vertical headers.
 
         if self.deals:
@@ -91,8 +117,8 @@ class Window(QtGui.QWidget):
         self.table.setRowCount(0)           # Effectively clearing the table if it has anything
 
         for n, deal in enumerate(self.deals):
-            # Take only first 4 words of each query so "+ inverse" isn't printed out.
-            vert_headers.append(' '.join(deal.query.split()[0:4]))
+
+            vert_headers.append(deal.query.header)
             # Get the amount of rows.
             row_position = self.table.rowCount()
             # And add a new row in the end.
@@ -106,7 +132,7 @@ class Window(QtGui.QWidget):
 
             # Making relative difference column:
             if deal.inverse_avg:
-                max_value, min_value = min_max(deal.avg, deal.inverse_avg)
+                min_value, max_value = min_max(deal.avg, deal.inverse_avg)
                 relative_difference = round((max_value / min_value - 1) * 100, 1)
                 self.table.setItem(row_position, 6,
                                    QtGui.QTableWidgetItem(str(relative_difference) + '%'))
@@ -133,14 +159,14 @@ class Window(QtGui.QWidget):
                     '{}'.format(deal.best_contact_data['username'],
                                 deal.best_contact_data['ign'],
                                 deal.best_contact_data['stock'],
-                                deal.query.split()[1]))
+                                deal.query.want))
             if deal.inverse_best:
                 self.table.item(n, 3).setToolTip(
                     'account: {}\nign: {}\nstock: {} '
                     '{}'.format(deal.inverse_best_contact_data['username'],
                                 deal.inverse_best_contact_data['ign'],
                                 deal.inverse_best_contact_data['stock'],
-                                deal.query.split()[3]))
+                                deal.query.have))
 
         # We have 4 fixed columns/horizontal headers.
         self.table.setHorizontalHeaderLabels(HOR_HEADERS)
@@ -151,26 +177,28 @@ class Window(QtGui.QWidget):
         self.table.resizeRowsToContents()
 
         # noinspection PyArgumentList
-        self.lastUpdate.setText('Last updated: ' + QtCore.QTime.currentTime().toString())
+        self.last_update.setText('Last updated: ' + QtCore.QTime.currentTime().toString())
 
     def contact_seller(self, row, col):   # TODO: improve this shit so there is no duplicate code
+        """Make a trade message and copy it in the clipboard."""
         if col == 0 and self.deals[row].best:
             aaa = self.construct_trade_msg(self.deals[row].best_contact_data['ign'],
                                            self.deals[row].best_contact_data['sellvalue'],
-                                           self.deals[row].query.split()[1],
+                                           self.deals[row].query.want,
                                            self.deals[row].best_contact_data['buyvalue'],
-                                           self.deals[row].query.split()[3])
+                                           self.deals[row].query.have)
             pyperclip.copy(aaa)
         if col == 3 and self.deals[row].inverse_best:
             aaa = self.construct_trade_msg(self.deals[row].inverse_best_contact_data['ign'],
                                            self.deals[row].inverse_best_contact_data['sellvalue'],
-                                           self.deals[row].query.split()[3],
+                                           self.deals[row].query.have,
                                            self.deals[row].inverse_best_contact_data['buyvalue'],
-                                           self.deals[row].query.split()[1])
+                                           self.deals[row].query.want)
             pyperclip.copy(aaa)
 
     @staticmethod
     def construct_trade_msg(ign, sellvalue, sellcurrency, buyvalue, buycurrency):
+        """Construct a poe.trade style trade message."""
         # Getting rid of decimal part if the number is actually integer.
         # Maybe there is a function/formatting that does it, i haven't found any.
         if sellvalue.endswith('.0'):
@@ -184,40 +212,42 @@ class Window(QtGui.QWidget):
         return message
 
     def emphasize_the_trend(self, current, old, row, column):
+        """Change the background according to rate change:
+        - light red if it went down
+        - light green if it went up
+        """
         if current < old:
             self.table.item(row, column).setBackground(QtGui.QColor(255, 230, 230))
         if current > old:
             self.table.item(row, column).setBackground(QtGui.QColor(230, 255, 230))
 
     def highlight_decent_deals(self, best_one, avg_one, row, column):
+        """Make the deal background green if it's pretty good."""
         if best_one:
-            max_value, min_value = min_max(best_one, avg_one)
+            min_value, max_value = min_max(best_one, avg_one)
             if min_value / max_value < 0.96:
                 self.table.item(row, column).setBackground(QtGui.QColor(161, 212, 144))
 
     def highlight_great_deals(self, best_one, avg_one, row, column):
+        """Make the deal background bright green if it's awesome."""
         if best_one:
-            max_value, min_value = min_max(best_one, avg_one)
+            min_value, max_value = min_max(best_one, avg_one)
             if min_value / max_value < 0.92:
                 self.table.item(row, column).setBackground(QtGui.QColor(67, 245, 7))
 
     def interpret_currency_search(self, queries):
-        """ Parse our queries which are written like such: 'buy chromatic with chaos'. """
+        """Parse our queries which are written like such: 'buy chromatic with chaos'."""
         all_deals = []
 
         completed = 0
         self.progress.setValue(completed)
-        amount_of_queries = len(queries.splitlines())
 
         # Cycle through all lines of the query(-ies).
-        for i, query in enumerate(queries.splitlines()):
-            # print(query)
-            # Get the index for each currency, i.e. 6 for exalted, 9 for chance etc.
-            want = CURRENCY.index(query.split()[1])  # TODO: make query a class
-            have = CURRENCY.index(query.split()[3])
+        for i, query_string in enumerate(queries.splitlines()):
+            query = Query(query_string)
             # Construct the link.
-            link = self.BASE_URL + 'search?league={}&online=x&want={}&have={}'.format(LEAGUE,
-                                                                                      want, have)
+            link = self.BASE_URL + 'search?league={}&online=x&want={}' \
+                                   '&have={}'.format(LEAGUE, query.want_index, query.have_index)
             best, avg, amount, best_contact_data = parse_the_page(link)
 
             inverse_best = 0
@@ -232,11 +262,10 @@ class Window(QtGui.QWidget):
 
             # If there is "+ inverse" keyword in the query, we
             # inverse the currencies and make the search again.
-            if len(query.split()) == 6 and query.split()[5] == 'inverse':
-                want, have = have, want
-                link = self.BASE_URL + 'search?league={}&online=x&want={}&have={}'.format(LEAGUE,
-                                                                                          want,
-                                                                                          have)
+            if query.inverse:
+                link = self.BASE_URL + 'search?league={}&online=x&want={}' \
+                                       '&have={}'.format(LEAGUE, query.have_index,
+                                                         query.want_index)
                 (inverse_best, inverse_avg, inverse_amount,
                  inverse_best_contact_data) = parse_the_page(link)
 
@@ -244,27 +273,28 @@ class Window(QtGui.QWidget):
             all_deals.append(Deal(query, best, avg, amount, inverse_best, inverse_avg,
                                   inverse_amount, best_contact_data, inverse_best_contact_data))
 
-            completed = 100 / amount_of_queries * (i + 1)
+            completed = 100 / len(queries.splitlines()) * (i + 1)
             self.progress.setValue(completed)
 
         return all_deals
 
 
 def get_site_contents(link):
-    """ Just a wrapper for mundane stuff. """
+    """Just a wrapper for mundane stuff."""
     res = requests.get(link)
     res.raise_for_status()          # Raise an exception if something bad happens.
     return BeautifulSoup(res.content, 'lxml')
 
 
 def min_max(a, b):
-    c = max(a, b)
-    d = min(a, b)
+    """Get min and max values in a one-liner."""
+    c = min(a, b)
+    d = max(a, b)
     return c, d
 
 
 def parse_the_page(link):
-    """ Check each individual currency search page. """
+    """Check each individual currency search page."""
     current_counter = 0
     best_deal = 0
     average_deal = 0
@@ -281,7 +311,7 @@ def parse_the_page(link):
     number_of_deals = len(results)
 
     for n, one_result in enumerate(results):
-        max_value, min_value = min_max(float(one_result['data-buyvalue']),
+        min_value, max_value = min_max(float(one_result['data-buyvalue']),
                                        float(one_result['data-sellvalue']))
         current_deal = round(max_value / min_value, 2)
         # print(current_deal, end=' ')
