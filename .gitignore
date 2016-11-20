@@ -2,3 +2,5 @@
 .idea/
 trash/
 /pylintrc
+/.coverage
+/htmlcov/
